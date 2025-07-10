@@ -9,12 +9,15 @@ import (
 	"test-pcap/pkg/analyzer"
 )
 
+var version = "dev"
+
 func main() {
 	var pcapFile string
 
 	rootCmd := &cobra.Command{
-		Use:   "pcapreplay",
-		Short: "Analyze HTTP requests in a pcap file",
+		Use:     "pcapreplay",
+		Short:   "Analyze HTTP requests in a pcap file",
+		Version: version,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if pcapFile == "" {
 				return fmt.Errorf("pcap file required")
@@ -31,6 +34,8 @@ func main() {
 			return nil
 		},
 	}
+
+	rootCmd.SetVersionTemplate("pcapreplay version {{.Version}}\n")
 
 	rootCmd.Flags().StringVarP(&pcapFile, "file", "f", "", "path to pcap file")
 	if err := rootCmd.Execute(); err != nil {
