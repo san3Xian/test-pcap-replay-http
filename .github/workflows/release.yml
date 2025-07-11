@@ -1,9 +1,9 @@
 name: Build Binaries
 
 on:
-  push:
-    tags:
-      - '*'
+  # push:
+  #  tags:
+  #    - '*'
   release:
     types: [published]
 
