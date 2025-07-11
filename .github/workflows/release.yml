@@ -10,6 +10,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
     strategy:
       matrix:
         goos: [linux, windows, darwin]
@@ -34,7 +37,7 @@ jobs:
             go build -ldflags "-X 'main.version=${{ steps.vars.outputs.VERSION }}'" -o "$BIN" ./cmd/pcapreplay
           tar -czf dist/${BIN}.tar.gz "$BIN"
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: pcapreplay-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/pcapreplay-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}*.tar.gz
