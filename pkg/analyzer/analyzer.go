@@ -17,11 +17,19 @@ import (
 )
 
 // Result describes information extracted from a single HTTP request.
+// Result describes information extracted from a single HTTP request.
+// In addition to basic metadata it also keeps the raw request
+// so that it can be replayed later.
 type Result struct {
 	Src        string
 	Dst        string
 	Method     string
 	URL        string
+	Host       string
+	Path       string
+	Headers    string
+	Body       []byte
+	Raw        []byte
 	Timestamp  time.Time
 	DecodedLen int
 	ContentLen int
@@ -106,11 +114,17 @@ func Analyze(file string) ([]Result, int, error) {
 			if req.host != "" {
 				url = req.host + req.path
 			}
+			raw := append([]byte(req.headers+"\r\n\r\n"), req.body...)
 			results = append(results, Result{
 				Src:        k.src,
 				Dst:        k.dst,
 				Method:     req.method,
 				URL:        url,
+				Host:       req.host,
+				Path:       req.path,
+				Headers:    req.headers,
+				Body:       req.body,
+				Raw:        raw,
 				Timestamp:  cd.start,
 				DecodedLen: len(decoded),
 				ContentLen: req.contentLength,
