@@ -16,4 +16,7 @@ func TestAnalyze(t *testing.T) {
 	if results[0].DecodedLen != results[0].ContentLen {
 		t.Errorf("decoded length mismatch: %d vs %d", results[0].DecodedLen, results[0].ContentLen)
 	}
+	if len(results[0].Body) != results[0].ContentLen {
+		t.Errorf("body length mismatch: %d vs %d", len(results[0].Body), results[0].ContentLen)
+	}
 }
