@@ -21,8 +21,10 @@ import (
 // In addition to basic metadata it also keeps the raw request
 // so that it can be replayed later.
 type Result struct {
-	Src        string
-	Dst        string
+	SrcIP      string
+	SrcPort    int
+	DstIP      string
+	DstPort    int
 	Method     string
 	URL        string
 	Host       string
@@ -116,8 +118,10 @@ func Analyze(file string) ([]Result, int, error) {
 			}
 			raw := append([]byte(req.headers+"\r\n\r\n"), req.body...)
 			results = append(results, Result{
-				Src:        k.src,
-				Dst:        k.dst,
+				SrcIP:      srcIP,
+				SrcPort:    int(tcp.SrcPort),
+				DstIP:      dstIP,
+				DstPort:    int(tcp.DstPort),
 				Method:     req.method,
 				URL:        url,
 				Host:       req.host,
@@ -154,12 +158,16 @@ func parseRequest(data []byte) (parsedReq, []byte, bool) {
 	var pr parsedReq
 	headerEnd := bytes.Index(data, []byte("\r\n\r\n"))
 	if headerEnd == -1 {
-		return pr, data, false
+		return pr, nil, false
 	}
 	headersPart := data[:headerEnd]
 	lines := strings.Split(string(headersPart), "\r\n")
 	if len(lines) == 0 {
-		return pr, data, false
+		return pr, nil, false
+	}
+	// bypass the response packet
+	if strings.HasPrefix(lines[0], "HTTP/") {
+		return pr, nil, false
 	}
 	fmt.Sscanf(lines[0], "%s %s", &pr.method, &pr.path)
 	var contentLength int

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/manifoldco/promptui"
@@ -36,8 +37,8 @@ func main() {
 			}
 			fmt.Printf("Total HTTP requests: %d\n", count)
 			for i, r := range results {
-				fmt.Printf("Request %d: %s -> %s %s %s at %s decoded length %d, content-length %d\n",
-					i+1, r.Src, r.Dst, r.Method, r.URL, r.Timestamp.Format(time.RFC3339), r.DecodedLen, r.ContentLen)
+				fmt.Printf("Request %d: %s:%d -> %s:%d %s %s at %s decoded length %d, content-length %d\n",
+					i+1, r.SrcIP, r.SrcPort, r.DstIP, r.DstPort, r.Method, r.URL, r.Timestamp.Format(time.RFC3339), r.DecodedLen, r.ContentLen)
 			}
 			if replay {
 				interactiveReplay(results)
@@ -61,12 +62,19 @@ func interactiveReplay(results []analyzer.Result) {
 	for {
 		items := make([]string, len(results))
 		for i, r := range results {
-			items[i] = fmt.Sprintf("%d: %s %s", i+1, r.Method, r.URL)
+			loc, _ := time.LoadLocation("Asia/Shanghai")
+			ts := r.Timestamp.In(loc)
+
+			items[i] = fmt.Sprintf("%d: %-20s %s %s", i+1, ts.Format(time.RFC3339), r.Method, r.URL)
 		}
 
 		sel := promptui.Select{
-			Label: "Select request to replay",
-			Items: items,
+			Label:             "Select request to replay",
+			Items:             items,
+			StartInSearchMode: true,
+			Searcher: func(input string, index int) bool {
+				return strings.Contains(strings.ToLower(items[index]), strings.ToLower(input))
+			},
 		}
 		idx, _, err := sel.Run()
 		if err != nil {
@@ -81,7 +89,7 @@ func interactiveReplay(results []analyzer.Result) {
 		}
 		path := r.Path
 
-		prompt := promptui.Prompt{Label: "Host", Default: host}
+		prompt := promptui.Prompt{Label: "Host(with port)", Default: host}
 		host, _ = prompt.Run()
 		prompt = promptui.Prompt{Label: "Path", Default: path}
 		path, _ = prompt.Run()
@@ -90,11 +98,11 @@ func interactiveReplay(results []analyzer.Result) {
 		schemeSel := promptui.Select{Label: "Scheme", Items: []string{"http", "https"}}
 		_, scheme, _ = schemeSel.Run()
 
-		portDefault := "80"
-		if scheme == "https" {
-			portDefault = "443"
-		}
-		prompt = promptui.Prompt{Label: "Port", Default: portDefault}
+		prompt = promptui.Prompt{Label: "DstIP", Default: r.DstIP}
+		dstIP, _ := prompt.Run()
+
+		portDefault := r.DstPort
+		prompt = promptui.Prompt{Label: "DstPort", Default: fmt.Sprintf("%d", portDefault)}
 		port, _ := prompt.Run()
 
 		skipVerify := false
@@ -108,24 +116,24 @@ func interactiveReplay(results []analyzer.Result) {
 
 		req, err := http.ReadRequest(bufio.NewReader(bytes.NewReader(r.Raw)))
 		if err != nil {
-			fmt.Println("parse request failed:", err)
+			fmt.Println("parse request failed: ", err)
 			return
 		}
 		bodyBytes, _ := io.ReadAll(req.Body)
 		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		req.ContentLength = int64(len(bodyBytes))
 		req.URL.Scheme = scheme
-		req.URL.Host = net.JoinHostPort(host, port)
+		req.URL.Host = host
 		req.Host = host
 		req.URL.Path = path
+		fmt.Print("Replaying request: \n", req.Method, " ", req.URL.String(), "\n", req.Header, "\n")
 
-		resp, info, err := sendRequest(req, scheme, host, port, skipVerify)
+		resp, info, err := sendRequest(req, scheme, dstIP, port, skipVerify)
 		if err != nil {
 			fmt.Println("replay failed:", err)
 		} else {
 			defer resp.Body.Close()
 			body, _ := io.ReadAll(resp.Body)
-			fmt.Printf("DNS lookup took %v, ip %s\n", info.DNS, info.IP)
 			fmt.Printf("TCP local addr %s, handshake %v\n", info.LocalAddr, info.TCP)
 			if scheme == "https" {
 				fmt.Printf("TLS handshake %v\n", info.TLS)
@@ -157,21 +165,31 @@ type replayInfo struct {
 	Session   time.Duration
 }
 
-func sendRequest(req *http.Request, scheme, host, port string, skipVerify bool) (*http.Response, replayInfo, error) {
+func sendRequest(req *http.Request, scheme, dstAddr, port string, skipVerify bool) (*http.Response, replayInfo, error) {
 	var info replayInfo
-	start := time.Now()
-	ips, err := net.LookupIP(host)
-	info.DNS = time.Since(start)
-	if err == nil && len(ips) > 0 {
-		info.IP = ips[0].String()
+	// var ips []net.IP
+	var err error
+	//if host is an IP address, we skip DNS lookup
+	fmt.Print(dstAddr, ":", port)
+	if net.ParseIP(dstAddr) != nil {
+		info.IP = dstAddr
+	} else {
+		return nil, info, fmt.Errorf("invalid IP address: %s", dstAddr)
 	}
-	target := host
-	if info.IP != "" {
-		target = info.IP
-	}
+	// else { //在pcap里面不可能是域名
+	// 	ips, err = net.LookupIP(dstAddr)
+	// 	info.DNS = time.Since(start)
+	// }
+	// if info.IP == "" && err == nil && len(ips) > 0 {
+	// 	info.IP = ips[0].String()
+	// }
+	// target := dstAddr
+	// if info.IP != "" {
+	// 	target = info.IP
+	// }
 	d := &net.Dialer{}
-	start = time.Now()
-	conn, err := d.Dial("tcp", net.JoinHostPort(target, port))
+	start := time.Now()
+	conn, err := d.Dial("tcp", net.JoinHostPort(dstAddr, port))
 	info.TCP = time.Since(start)
 	if err != nil {
 		return nil, info, err
@@ -181,7 +199,7 @@ func sendRequest(req *http.Request, scheme, host, port string, skipVerify bool) 
 	var rw net.Conn = conn
 	if scheme == "https" {
 		tlsStart := time.Now()
-		tconn := tls.Client(conn, &tls.Config{ServerName: host, InsecureSkipVerify: skipVerify})
+		tconn := tls.Client(conn, &tls.Config{ServerName: req.Host, InsecureSkipVerify: skipVerify})
 		if err := tconn.Handshake(); err != nil {
 			return nil, info, err
 		}
