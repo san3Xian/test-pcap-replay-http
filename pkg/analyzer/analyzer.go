@@ -17,11 +17,21 @@ import (
 )
 
 // Result describes information extracted from a single HTTP request.
+// Result describes information extracted from a single HTTP request.
+// In addition to basic metadata it also keeps the raw request
+// so that it can be replayed later.
 type Result struct {
-	Src        string
-	Dst        string
+	SrcIP      string
+	SrcPort    int
+	DstIP      string
+	DstPort    int
 	Method     string
 	URL        string
+	Host       string
+	Path       string
+	Headers    string
+	Body       []byte
+	Raw        []byte
 	Timestamp  time.Time
 	DecodedLen int
 	ContentLen int
@@ -106,11 +116,19 @@ func Analyze(file string) ([]Result, int, error) {
 			if req.host != "" {
 				url = req.host + req.path
 			}
+			raw := append([]byte(req.headers+"\r\n\r\n"), req.body...)
 			results = append(results, Result{
-				Src:        k.src,
-				Dst:        k.dst,
+				SrcIP:      srcIP,
+				SrcPort:    int(tcp.SrcPort),
+				DstIP:      dstIP,
+				DstPort:    int(tcp.DstPort),
 				Method:     req.method,
 				URL:        url,
+				Host:       req.host,
+				Path:       req.path,
+				Headers:    req.headers,
+				Body:       req.body,
+				Raw:        raw,
 				Timestamp:  cd.start,
 				DecodedLen: len(decoded),
 				ContentLen: req.contentLength,
@@ -140,12 +158,16 @@ func parseRequest(data []byte) (parsedReq, []byte, bool) {
 	var pr parsedReq
 	headerEnd := bytes.Index(data, []byte("\r\n\r\n"))
 	if headerEnd == -1 {
-		return pr, data, false
+		return pr, nil, false
 	}
 	headersPart := data[:headerEnd]
 	lines := strings.Split(string(headersPart), "\r\n")
 	if len(lines) == 0 {
-		return pr, data, false
+		return pr, nil, false
+	}
+	// bypass the response packet
+	if strings.HasPrefix(lines[0], "HTTP/") {
+		return pr, nil, false
 	}
 	fmt.Sscanf(lines[0], "%s %s", &pr.method, &pr.path)
 	var contentLength int
